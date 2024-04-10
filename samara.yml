@@ -1,0 +1,78 @@
+---
+
+# boto and python is required to run playbook 
+
+- name: deploy instance 
+  hosts: localhost
+  connection: local
+  vars_files:
+    - aws_credentials.yml
+  tasks:
+
+    - name: Create Security Group
+      ec2_group:
+        name: my-security-group
+        description: My security group
+        vpc_id: vpc-12345678  
+        region: us-west-2
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: security_group
+      security_group: "{{ security_group.group_id }}"
+
+    - name:  EC2 instance
+      ec2_instance:
+        key_name: my-key
+        instance_type: t2.micro
+        image: ami-0c55b159cbfafe1f0
+        region: us-west-2
+        count: 1
+        vpc_subnet_id: subnet-12345678
+        assign_public_ip: yes
+        wait: yes
+        instance_tags:
+          Name: my-web-server
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+      register: ec2
+
+    - name: Add new EC2 instance to host group
+      add_host:
+        hostname: "{{ item.public_ip }}"
+        groupname: launched
+      with_items: "{{ ec2.instances }}"
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ item.public_ip }}"
+        port: 22
+        delay: 60
+        timeout: 320
+        state: started
+      with_items: "{{ ec2.instances }}"
+
+    - name: Configure and start Apache web server
+      hosts: launched
+      become: true
+      tasks:
+        - name: Install Apache
+          yum:
+            name: httpd
+            state: present
+
+    - name: Clone Web Application Repository
+      git:
+        repo: https://github.com/yourusername/yourwebapp.git
+        dest: /tmp/yourwebapp
+        version: master
+
+    - name: Copy Configuration Files
+      copy:
+        src: /path/to/your/configuration/files
+        dest: /tmp/yourwebapp/config      
+          
+    - name: Start Apache service
+      service:
+        name: httpd
+        state: started
+        enabled: true
